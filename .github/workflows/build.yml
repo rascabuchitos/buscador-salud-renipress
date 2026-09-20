@@ -1,0 +1,49 @@
+name: Actualizar buscador de establecimientos de salud
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 9:00 UTC = 4:00 am hora Perú, todos los días
+  workflow_dispatch: {}    # botón "Run workflow" para probarlo a mano
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Descargar CSV y verificar si cambió
+        id: check
+        run: python3 build/download_and_check.py
+
+      - name: Reconstruir dist/ (solo si hay datos nuevos)
+        if: steps.check.outputs.changed == 'true'
+        run: python3 build/shard.py
+
+      - name: Publicar en mariopastor.pro por FTP
+        if: steps.check.outputs.changed == 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./web/
+          server-dir: ./
+          exclude: |
+            **/.git*
+            **/.git*/**
+
+      - name: Guardar el hash de esta versión en el repo
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add build/.last_hash.txt
+          git commit -m "Actualización automática RENIPRESS $(date +%Y-%m-%d)" || echo "sin cambios que commitear"
+          git push
